@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+database.db
+gopay.db
+backend/app/database/gopay.db
+
+# Env & secrets
+.env
+
+# Node / frontend
+frontend/node_modules/
+frontend/.cache/
+frontend/build/
