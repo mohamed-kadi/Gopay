@@ -22,6 +22,8 @@ class PaymentRequest(BaseModel):
 
 class SubscriptionRequest(BaseModel):
     price_id: str
+class CancelRequest(BaseModel):
+    subscription_id: str
 
 
 @router.post("/create-payment-intent")
@@ -112,6 +114,66 @@ def create_subscription(
         )
         session.add(record)
         session.commit()
-        return {"client_secret": client_secret, "subscription_id": subscription.id, "status": subscription.status}
+        return {
+            "client_secret": client_secret,
+            "subscription_id": subscription.id,
+            "status": subscription.status,
+            "price_id": payload.price_id,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/subscriptions/me")
+def list_my_subscriptions(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    price_map = {
+        settings.STRIPE_PRICE_PRO: "Pro",
+        settings.STRIPE_PRICE_ENTERPRISE: "Enterprise",
+    }
+    subscriptions = session.exec(
+        select(Subscription).where(Subscription.user_id == current_user.id).order_by(Subscription.created_at.desc())
+    ).all()
+    return [
+        {
+            "id": sub.id,
+            "price_id": sub.price_id,
+            "plan_name": price_map.get(sub.price_id, sub.price_id),
+            "status": sub.status,
+            "stripe_subscription_id": sub.stripe_subscription_id,
+            "cancel_at_period_end": sub.cancel_at_period_end,
+            "current_period_end": sub.current_period_end,
+            "created_at": sub.created_at,
+        }
+        for sub in subscriptions
+    ]
+
+
+@router.post("/subscriptions/cancel")
+def cancel_subscription(
+    payload: CancelRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    subscription = session.exec(
+        select(Subscription).where(
+            Subscription.stripe_subscription_id == payload.subscription_id,
+            Subscription.user_id == current_user.id,
+        )
+    ).first()
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    try:
+        stripe.Subscription.modify(
+            payload.subscription_id,
+            cancel_at_period_end=True,
+        )
+        subscription.cancel_at_period_end = True
+        subscription.status = "canceled"
+        session.add(subscription)
+        session.commit()
+        return {"status": "canceled", "subscription_id": payload.subscription_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
